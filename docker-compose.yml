@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:14
+    restart: always
+    environment:
+      POSTGRES_USER: nlp_user
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: nlp_articles
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
