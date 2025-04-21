@@ -1,0 +1,91 @@
+import os
+import argparse
+import faiss
+import json
+import numpy as np
+import psycopg2
+from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+
+# Load env and paths
+load_dotenv()
+
+DB_PARAMS = dict(
+    dbname="nlp_articles",
+    user="nlp_user",
+    password="secret",
+    host="localhost",
+    port=5433
+)
+
+# Output paths
+INDEX_PATH = "/Users/ganapathynagasubramaniam/Desktop/YabNLP/Yab-NLP-Services/faiss_index/nyt_faiss.index"
+MAPPING_PATH = "/Users/ganapathynagasubramaniam/Desktop/YabNLP/Yab-NLP-Services/faiss_index/id_mapping.json"
+
+model = SentenceTransformer("all-MiniLM-L6-v2")
+
+def cosine_similarity(v1, v2):
+    return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+
+def query_db(article_ids):
+    conn = psycopg2.connect(**DB_PARAMS)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id, headline, summary, url FROM nyt_articles WHERE id = ANY(%s);",
+        (article_ids,)
+    )
+    results = cursor.fetchall()
+    conn.close()
+    return {row[0]: row for row in results}
+
+def search(query, threshold=0.75, top_k=10):
+    # Load index and mapping
+    index = faiss.read_index(INDEX_PATH)
+    with open(MAPPING_PATH, "r") as f:
+        id_map = json.load(f)
+
+    # Embed the query
+    query_vector = model.encode([query])[0].astype("float32")
+    D, I = index.search(np.array([query_vector]), k=top_k)
+
+    matches = []
+    for dist, idx in zip(D[0], I[0]):
+        if idx == -1: continue  # padding index
+        doc_id = id_map[str(idx)]
+        # Convert L2 distance to cosine similarity
+        # Only valid for normalized vectors (optional: normalize embeddings during index build)
+        embedding = index.reconstruct(int(idx))
+        sim = cosine_similarity(query_vector, embedding)
+        if sim >= threshold:
+            matches.append((doc_id, sim))
+
+    return matches
+
+def display_results(query, threshold):
+    print(f"🔎 Searching for: \"{query}\" (threshold: {threshold})")
+    matches = search(query, threshold=threshold)
+
+    if not matches:
+        print("❌ No relevant articles found.")
+        return
+
+    article_ids = [m[0] for m in matches]
+    rows = query_db(article_ids)
+
+    for doc_id, score in matches:
+        row = rows[doc_id]
+        print("\n---------------------------")
+        print(f"📰 {row[1]}")
+        print(f"📎 {row[3]}")
+        print(f"💡 Similarity: {score:.3f}")
+        print(f"📝 {row[2][:300]}...")
+        print("---------------------------")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--query", required=True, help="Search query")
+    parser.add_argument("--threshold", type=float, default=0.75, help="Cosine similarity threshold")
+    args = parser.parse_args()
+
+    display_results(args.query, args.threshold)
