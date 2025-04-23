@@ -6,7 +6,7 @@ import numpy as np
 import psycopg2
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
-
+from sklearn.preprocessing import normalize
 # Load env and paths
 load_dotenv()
 
@@ -32,7 +32,7 @@ def query_db(article_ids):
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT id, headline, summary, url FROM nyt_articles WHERE id = ANY(%s);",
+        "SELECT id, headline, summary, url, full_text, sentiment FROM nyt_articles WHERE id = ANY(%s);",
         (article_ids,)
     )
     results = cursor.fetchall()
@@ -46,41 +46,44 @@ def search(query, threshold=0.75, top_k=10):
         id_map = json.load(f)
 
     # Embed the query
-    query_vector = model.encode([query])[0].astype("float32")
-    D, I = index.search(np.array([query_vector]), k=top_k)
+ 
+    query_vector = model.encode([query])
+    query_vector = normalize(query_vector, norm='l2').astype("float32")
+
+    D, I = index.search(query_vector, k=top_k)
 
     matches = []
-    for dist, idx in zip(D[0], I[0]):
+    for sim, idx in zip(D[0], I[0]):
         if idx == -1: continue  # padding index
-        doc_id = id_map[str(idx)]
-        # Convert L2 distance to cosine similarity
-        # Only valid for normalized vectors (optional: normalize embeddings during index build)
-        embedding = index.reconstruct(int(idx))
-        sim = cosine_similarity(query_vector, embedding)
         if sim >= threshold:
-            matches.append((doc_id, sim))
+            matches.append((id_map[str(idx)], float(sim)))
 
     return matches
 
-def display_results(query, threshold):
-    print(f"🔎 Searching for: \"{query}\" (threshold: {threshold})")
-    matches = search(query, threshold=threshold)
+def retrieve_documents(query, threshold=0.75, top_k=2):
+    matches = search(query, threshold=threshold, top_k=top_k)
 
     if not matches:
-        print("❌ No relevant articles found.")
-        return
+        return []
 
     article_ids = [m[0] for m in matches]
     rows = query_db(article_ids)
 
+    documents = []
     for doc_id, score in matches:
         row = rows[doc_id]
-        print("\n---------------------------")
-        print(f"📰 {row[1]}")
-        print(f"📎 {row[3]}")
-        print(f"💡 Similarity: {score:.3f}")
-        print(f"📝 {row[2][:300]}...")
-        print("---------------------------")
+        documents.append({
+            "id": doc_id,
+            "headline": row[1],
+            "summary": row[2],
+            "url": row[3],
+            "full_text": row[4], 
+            "sentiment": row[5],
+            "similarity": score
+        })
+
+    return documents
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -88,4 +91,14 @@ if __name__ == "__main__":
     parser.add_argument("--threshold", type=float, default=0.75, help="Cosine similarity threshold")
     args = parser.parse_args()
 
-    display_results(args.query, args.threshold)
+    docs = retrieve_documents(args.query, args.threshold)
+    if not docs:
+        print("❌ No relevant articles found.")
+    else:
+        for doc in docs:
+            print("\n---------------------------")
+            print(f"📰 {doc['headline']}")
+            print(f"📎 {doc['url']}")
+            print(f"💡 Similarity: {doc['similarity']:.3f}")
+            print(f"📝 {doc['summary'][:300]}...")
+            print("---------------------------")

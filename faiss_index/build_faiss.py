@@ -6,6 +6,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from tqdm import tqdm
+from sklearn.preprocessing import normalize
 
 # Load env
 load_dotenv()
@@ -45,11 +46,12 @@ def build_and_save_index(articles):
             texts.append(text)
 
     embeddings = model.encode(texts, show_progress_bar=True)
+    embeddings = normalize(embeddings, norm='l2')  # 🔥 normalize to unit vectors
     embeddings = np.array(embeddings).astype("float32")
 
     print("🔍 Building FAISS index...")
     dim = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dim)
+    index = faiss.IndexFlatIP(dim) #inner product of unit vectors gives cosine similarity
     index.add(embeddings)
 
     print("💾 Saving index to disk...")
