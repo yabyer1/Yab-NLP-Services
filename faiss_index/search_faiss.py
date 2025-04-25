@@ -32,7 +32,7 @@ def query_db(article_ids):
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT id, headline, summary, url, full_text, sentiment FROM nyt_articles WHERE id = ANY(%s);",
+        "SELECT id, headline, summary_generated, url, full_text, sentiment FROM nyt_articles WHERE id = ANY(%s);",
         (article_ids,)
     )
     results = cursor.fetchall()

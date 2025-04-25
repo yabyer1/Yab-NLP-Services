@@ -12,7 +12,9 @@ from selenium.webdriver.chrome.service import Service
 import sqlite3
 from datetime import datetime
 import psycopg2
-
+import time
+import random
+import calendar
 options = Options()
 options.add_argument("--headless")  
 options.add_argument("--disable-gpu")
@@ -47,8 +49,16 @@ def extract_entities(text):
     except:
         return []
 
+import csv
+def log_scrape_result(log_path, year, month, start_date, end_date, num_articles, success, notes=""):
+    file_exists = os.path.isfile(log_path)
+    with open(log_path, "a", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        if not file_exists:
+            writer.writerow(["year", "month", "start_date", "end_date", "num_articles", "success", "notes"])
+        writer.writerow([year, month, start_date, end_date, num_articles, success, notes])
 # Fetch list of articles
-def fetch_nyt_finance_articles(pages=1):
+def fetch_nyt_finance_articles(pages=100, start_date=None, end_date=None):
     articles = []
     for page in range(pages):
         params = {
@@ -57,22 +67,40 @@ def fetch_nyt_finance_articles(pages=1):
             "api-key": nyt_api_key,
             "page": page
         }
+        if start_date:
+            params["begin_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
 
-        response = requests.get(URL, params=params)
-        if response.status_code != 200:
-            print(f"Error: {response.status_code}, {response.text}")
-            continue
-
-        data = response.json()
-        docs = data.get("response", {}).get("docs", [])
-
-        for article in docs:
-            articles.append({
-                "headline": article["headline"]["main"],
-                "url": article["web_url"],
-                "published_date": article["pub_date"],
-                "summary": article.get("abstract", "no summary available")
-            })
+        success = False
+        retries = 0
+        while not success and retries < 3:
+            try:
+                response = requests.get(URL, params=params, timeout=10)
+                if response.status_code == 200:
+                    success = True
+                    data = response.json()
+                    docs = data.get("response", {}).get("docs", [])
+                    if not docs:
+                        print(f"🔚 No more articles at page {page}")
+                        return articles
+                    for article in docs:
+                        articles.append({
+                            "headline": article["headline"]["main"],
+                            "url": article["web_url"],
+                            "published_date": article["pub_date"],
+                            "summary": article.get("abstract", "no summary available")
+                        })
+                else:
+                    print(f"⚠️ Error {response.status_code} at page {page}: {response.text}")
+                    retries += 1
+                    sleep_time = 3 * retries + random.uniform(0, 2)
+                    print(f"⏳ Retrying in {sleep_time:.1f}s...")
+                    time.sleep(sleep_time)
+            except Exception as e:
+                print(f"🔥 Exception at page {page}: {e}")
+                retries += 1
+                time.sleep(3 * retries)
 
     return articles
 
@@ -122,20 +150,35 @@ def save_to_pg(article, full_text, sentiment, summary_generated, entities):
 
     conn.commit()
     conn.close()
-
+LOG_FILE = "/Users/ganapathynagasubramaniam/Desktop/YabNLP/Yab-NLP-Services/scraper/scraped_log.csv"
 if __name__ == "__main__":
-    articles = fetch_nyt_finance_articles(pages=1)
-    for i, article in enumerate(articles):
-        print(f"\n📰 {i+1}: {article['headline']}")
-        driver = webdriver.Chrome(service=service, options=options)
-        full_text = fetch_article_text(article['url'])
-        driver.quit()
-        print("fetched text")
-        sentiment = analyze_sentiment(full_text)
-        print("fetched sentiment")
-        summary = summarize_article(full_text)
-        print("fetched summary")
-        entities = extract_entities(full_text)
-        print("fetched entities")
-        save_to_pg(article, full_text, sentiment, summary, entities)
-        print(f"✅ Saved to DB with sentiment='{sentiment}'")
+   for year in range(2010, 2025):
+    for month in range(1, 13):
+        start = f"{year}{month:02d}01"
+        end_day = calendar.monthrange(year, month)[1]
+        end = f"{year}{month:02d}{end_day}"
+        print(f"\n📅 Scraping articles for {start} to {end}...")
+        try:
+            articles = fetch_nyt_finance_articles(pages=100, start_date=start, end_date=end)
+            driver = webdriver.Chrome(service=service, options=options)
+            for i, article in enumerate(articles):
+                print(f"\n📰 {i+1}: {article['headline']}")
+        
+                full_text = fetch_article_text(article['url'])
+            
+                print("fetched text")
+                sentiment = analyze_sentiment(full_text)
+                print("fetched sentiment")
+                summary = summarize_article(full_text)
+                print("fetched summary")
+                entities = extract_entities(full_text)
+                print("fetched entities")
+                save_to_pg(article, full_text, sentiment, summary, entities)
+                print(f"✅ Saved to DB with sentiment='{sentiment}'")
+            driver.quit()
+            log_scrape_result(LOG_FILE, year, month, start, end, len(articles), True)
+        except Exception as e:
+            print(f"❌ Failed to scrape {start}-{end}: {e}")
+            log_scrape_result(LOG_FILE, year, month, start, end, 0, False, str(e))
+        time.sleep(random.uniform(3, 6))
+
