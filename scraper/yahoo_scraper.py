@@ -16,7 +16,7 @@ HEADERS = {
     )
 }
 
-KEYWORDS = ["brexit", "inflation", "elections", "interest rates", "immigration", "Ukraine", "Russia", "Tariffs", "Trump"]
+KEYWORDS = ["immigration", "Ukraine", "Russia", "Tariffs", "Trump"]
 from urllib.parse import urlparse, parse_qs, unquote
 
 def extract_final_url(yahoo_redirect_url):

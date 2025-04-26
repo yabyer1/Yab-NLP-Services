@@ -1,40 +1,36 @@
+# LLM.py
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from faiss_index.search_faiss import retrieve_documents
-results = retrieve_documents("Why is inflation rising?", threshold=0.75)
+from faiss_index.search_faiss import search_chunks
 from ctransformers import AutoModelForCausalLM
-for doc in results:
-    print(doc['headline'], doc['similarity'])
-
-from transformers import pipeline
 
 llm = AutoModelForCausalLM.from_pretrained(
-    'RAG/models/llama/',  # local directory
+    'RAG/models/llama/', 
     model_file='tinyllama-1.1b-chat-v1.0.Q2_K.gguf',
     model_type='llama',
-    max_new_tokens=512,         # control output size
-    context_length=8192         # ✅ max context size supported
+    max_new_tokens=512,
+    context_length=8192
 )
 
-def is_reference_question(message):
-        keywords = ["why", "how", "what", "who", "when", "impact", "effect", "cause", "change", "should"]
-        return any(kw in message.lower() for kw in keywords) #return true if we havea  reference question and need to ujse extra context
+# Load chunk texts
+CHUNK_TEXTS_DIR = "/Users/ganapathynagasubramaniam/Desktop/YabNLP/Yab-NLP-Services/faiss_index/chunk_texts.json"
 
-def build_rag_prompt(question, retrieved_articles):
-    
+# This assumes you save a dict {chunk_id: chunk_text} after building
+import json
+with open(CHUNK_TEXTS_DIR, "r", encoding="utf-8") as f:
+    chunk_texts = json.load(f)
+
+def build_prompt(question, matched_chunks):
     context = "\n\n".join([
-        f"TITLE: {a['headline']}\nSUMMARY: {a['summary']}\nTEXT: {a['full_text'][:800]}"
-      
-        for a in retrieved_articles
+        f"CONTEXT:\n{chunk_texts[chunk_id]}" for chunk_id, score in matched_chunks
     ])
-    return f"""You are a helpful assistant. Use the following articles to answer the question:
+    return f"""You are a helpful assistant. Use the following information to answer the question carefully.
 
 {context}
 
 QUESTION: {question}
 ANSWER:"""
-
 
 def rag_chatbot():
     print("💬 RAG Chatbot Initialized. Type 'exit' to quit.")
@@ -43,20 +39,16 @@ def rag_chatbot():
         if user_input.lower() == "exit":
             break
 
-        if is_reference_question(user_input):
-            print("🔍 Triggering semantic search...")
-            matches = retrieve_documents(user_input, threshold=0.5)
-            if not matches:
-                print("🤖 No relevant articles found.")
-                continue
-            
+        print(f"🔍 Searching relevant paragraph chunks...")
+        matches = search_chunks(user_input, top_k=15)
 
-       
-            prompt = build_rag_prompt(user_input, matches)
-            response = llm(prompt)
-            print("🤖", response)
+        if not matches:
+            print("🤖 No relevant paragraphs found.")
+            continue
 
-        else:
-            print("🤖 I'm here to help with news-related questions. Ask me something!")
+        prompt = build_prompt(user_input, matches)
+        response = llm(prompt)
+        print("🤖", response)
+
 if __name__ == "__main__":
     rag_chatbot()
