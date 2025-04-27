@@ -8,6 +8,7 @@ from selenium import webdriver
 from selenium.webdriver.common.proxy import Proxy, ProxyType
 from selenium.webdriver.chrome.options import Options
 import time 
+from datetime import timedelta
 from selenium.webdriver.chrome.service import Service
 import sqlite3
 from datetime import datetime
@@ -57,52 +58,6 @@ def log_scrape_result(log_path, year, month, start_date, end_date, num_articles,
         if not file_exists:
             writer.writerow(["year", "month", "start_date", "end_date", "num_articles", "success", "notes"])
         writer.writerow([year, month, start_date, end_date, num_articles, success, notes])
-# Fetch list of articles
-def fetch_nyt_finance_articles(pages=100, start_date=None, end_date=None):
-    articles = []
-    for page in range(pages):
-        params = {
-            "q": "finance",
-            "sort": "newest",
-            "api-key": nyt_api_key,
-            "page": page
-        }
-        if start_date:
-            params["begin_date"] = start_date
-        if end_date:
-            params["end_date"] = end_date
-
-        success = False
-        retries = 0
-        while not success and retries < 3:
-            try:
-                response = requests.get(URL, params=params, timeout=10)
-                if response.status_code == 200:
-                    success = True
-                    data = response.json()
-                    docs = data.get("response", {}).get("docs", [])
-                    if not docs:
-                        print(f"🔚 No more articles at page {page}")
-                        return articles
-                    for article in docs:
-                        articles.append({
-                            "headline": article["headline"]["main"],
-                            "url": article["web_url"],
-                            "published_date": article["pub_date"],
-                            "summary": article.get("abstract", "no summary available")
-                        })
-                else:
-                    print(f"⚠️ Error {response.status_code} at page {page}: {response.text}")
-                    retries += 1
-                    sleep_time = 3 * retries + random.uniform(0, 2)
-                    print(f"⏳ Retrying in {sleep_time:.1f}s...")
-                    time.sleep(sleep_time)
-            except Exception as e:
-                print(f"🔥 Exception at page {page}: {e}")
-                retries += 1
-                time.sleep(3 * retries)
-
-    return articles
 
 def fetch_article_text(url):
     driver.get(url)
@@ -114,8 +69,22 @@ def fetch_article_text(url):
         if a != 'Advertisement' and a != 'Supported by' and a != 'Send any friend a story' and a != 'As a subscriber, you have 10 gift articles to give each month. Anyone can read what you share.' and not a.startswith("By"):
             article_text += a 
             article_text += " "
-    time.sleep(8)
+   
     return article_text
+def fetch_articles_by_month(year, month):
+    url = f"https://api.nytimes.com/svc/archive/v1/{year}/{month}.json"
+    params = {
+        "api-key": nyt_api_key
+    }
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        print(f"❌ Failed to fetch {year}-{month:02d}: {response.status_code}")
+        return []
+
+    data = response.json()
+    articles = data['response']['docs']
+    return articles
+
 # --- Save to PostgreSQL ---
 def save_to_pg(article, full_text, sentiment, summary_generated, entities):
     conn = psycopg2.connect(
@@ -137,7 +106,7 @@ def save_to_pg(article, full_text, sentiment, summary_generated, entities):
         ON CONFLICT (id) DO NOTHING;
     """, (
         unique_id,
-        article['headline'],
+        article['headline']['main'],
         article['summary'],
         article['url'],
         article['published_date'],
@@ -152,33 +121,40 @@ def save_to_pg(article, full_text, sentiment, summary_generated, entities):
     conn.close()
 LOG_FILE = "/Users/ganapathynagasubramaniam/Desktop/YabNLP/Yab-NLP-Services/scraper/scraped_log.csv"
 if __name__ == "__main__":
-   for year in range(2010, 2025):
-    for month in range(1, 13):
-        start = f"{year}{month:02d}01"
-        end_day = calendar.monthrange(year, month)[1]
-        end = f"{year}{month:02d}{end_day}"
-        print(f"\n📅 Scraping articles for {start} to {end}...")
-        try:
-            articles = fetch_nyt_finance_articles(pages=100, start_date=start, end_date=end)
-            driver = webdriver.Chrome(service=service, options=options)
-            for i, article in enumerate(articles):
-                print(f"\n📰 {i+1}: {article['headline']}")
-        
-                full_text = fetch_article_text(article['url'])
+
+    driver = webdriver.Chrome(service=service, options=options)
+    for year in range(2024, 2025):
+        for month in range(1, 13):
             
-                print("fetched text")
+
+            articles = fetch_articles_by_month(year, month)
+
+            print(f"✅ Fetched {len(articles)} articles for {month}/{year}")
+
+            for article in articles:
+                if 'published_date' not in article:
+                    article['published_date'] = datetime.utcnow().isoformat()
+
+                article['url'] = article['web_url']
+                try:
+                 full_text = fetch_article_text(article['url'])
+                except Exception as e:
+                    print(f"⚠️ Error fetching article {article['url']}: {e}")
+                    continue
+                if len(full_text.strip()) < 300:
+                    print("⚠️ Skipping short article")
+                    continue
                 sentiment = analyze_sentiment(full_text)
-                print("fetched sentiment")
-                summary = summarize_article(full_text)
-                print("fetched summary")
+                summary_generated = summarize_article(full_text)
+                article['summary'] = article.get('abstract', '') 
+                if not article['summary']:
+                    article['summary'] = summary_generated
                 entities = extract_entities(full_text)
-                print("fetched entities")
-                save_to_pg(article, full_text, sentiment, summary, entities)
-                print(f"✅ Saved to DB with sentiment='{sentiment}'")
-            driver.quit()
-            log_scrape_result(LOG_FILE, year, month, start, end, len(articles), True)
-        except Exception as e:
-            print(f"❌ Failed to scrape {start}-{end}: {e}")
-            log_scrape_result(LOG_FILE, year, month, start, end, 0, False, str(e))
-        time.sleep(random.uniform(3, 6))
+                save_to_pg(article,full_text,sentiment, summary_generated, entities)
+                print(f"\nsaved {article['headline']['main']} to db")
+
+       
+        
+    driver.quit()
+
 
