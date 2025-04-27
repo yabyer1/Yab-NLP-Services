@@ -1,3 +1,12 @@
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.9-blue.svg" alt="Python Version"/>
+  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License"/>
+  <img src="https://img.shields.io/badge/Framework-Streamlit-orange.svg" alt="Streamlit"/>
+  <img src="https://img.shields.io/badge/Database-PostgreSQL-blue.svg" alt="PostgreSQL"/>
+  <img src="https://img.shields.io/badge/Embeddings-MiniLM--L6--v2-red.svg" alt="Sentence Transformer"/>
+  <img src="https://img.shields.io/badge/Container-Docker-blue.svg" alt="Docker"/>
+</p>
+
 # 🚀 Retrieval-Augmented Generation (RAG) Chatbot
 
 ---
