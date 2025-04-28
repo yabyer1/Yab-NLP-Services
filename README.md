@@ -6,6 +6,9 @@
   <img src="https://img.shields.io/badge/Embeddings-MiniLM--L6--v2-red.svg" alt="Sentence Transformer"/>
   <img src="https://img.shields.io/badge/Container-Docker-blue.svg" alt="Docker"/>
 </p>
+<p align="center">
+  <img src="assets/demo.gif" width="700"/>
+</p>
 
 # 🚀 Retrieval-Augmented Generation (RAG) Chatbot
 
